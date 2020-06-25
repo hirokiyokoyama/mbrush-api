@@ -3,7 +3,10 @@
 import numpy as np
 
 LINE_WIDTH = 360
-COLOR_INTERVAL = 32
+#COLOR_INTERVAL = 32
+COLOR_OFFSETS = [
+  36*2, 36*2+10, 36+10, 36, 0, 10
+]
 
 def _dither(img):
   assert(len(img.shape) in [2,3])
@@ -27,53 +30,6 @@ def _dither(img):
       img[y+1, x+1] += 1/16 * error
   img = np.uint8(img[0:-1,1:-1])
   return img
-
-def _add_line(buf, line, channel):
-  """
-  buf: np.ndarray
-    Output line buffer with shape [18,120] and dtype np.uint8,
-    each element of which is either 0 or 1.
-  line: np.ndarray
-    Binary image column from bottom to top
-    with shape [180] and dtype np.uint8,
-    each element of which is either 0 or 1.
-  channel: str
-    'C0', 'C1', 'M0', 'M1', 'Y0', or 'Y1'.
-  """
-  
-  assert(buf.dtype == np.uint8)
-  assert(buf.shape == (18,120))
-  assert(np.all(buf <= 1))
-  assert(line.dtype == np.uint8)
-  assert(line.shape == (180,))
-  assert(np.all(line <= 1))
-  
-  inds = np.array([0,10,1,11,2,12,3,13,4,14])
-  inds += {
-    'Y0': 0,
-    'Y1': 5,
-    'M0': 20,
-    'M1': 25,
-    'C0': 40,
-    'C1': 45
-  }[channel]
-  inds = np.concatenate([inds, inds+60])
-  
-  fine_inds = {
-    # (np.arange(9)*4 + n) % 9
-    'Y0': np.array([1,5,0,4,8,3,7,2,6]),
-    'Y1': np.array([8,3,7,2,6,1,5,0,4]),
-    'M0': np.array([8,3,7,2,6,1,5,0,4]),
-    'M1': np.array([1,5,0,4,8,3,7,2,6]),
-    'C0': np.array([1,5,0,4,8,3,7,2,6]),
-    'C1': np.array([8,3,7,2,6,1,5,0,4])
-  }[channel]
-  line = line.reshape(20,9).transpose().copy()
-  line[fine_inds,:] = line.copy()
-  
-  buf[:9,inds] += line
-  assert(np.all(buf <= 1))
-  return buf
 
 def _arrange_line(line):
   """
@@ -151,51 +107,57 @@ def _resize(img):
   img = cv2.resize(img, (int(w*scale), LINE_WIDTH))
   return img
 
-def _cmy_array_to_lines(img):
-  img_c = img[:,:,0]
-  img_m = img[:,:,1]
-  img_y = img[:,:,2]
-  #print(img_m[:,0])
+def _cmy_array_to_lines(img, color_offsets=None):
+  if color_offsets is None:
+    color_offsets = COLOR_OFFSETS
+    
+  img_yl = img[-1::-2,:,2]
+  img_yr = img[-2::-2,:,2]
+  img_ml = img[-1::-2,:,1]
+  img_mr = img[-2::-2,:,1]
+  img_cl = img[-1::-2,:,0]
+  img_cr = img[-2::-2,:,0]
 
-  #buf = np.empty([18,120], dtype=np.uint8)
   lines = []
   W = img.shape[1]
-  for i in range(W + 2*COLOR_INTERVAL):
-    #buf[:] = 0
-
-    i_c = i
-    i_m = i - COLOR_INTERVAL
-    i_y = i - 2*COLOR_INTERVAL
+  for i in range(W + max(color_offsets)):
+    i_yr = i - color_offsets[0]
+    i_yl = i - color_offsets[1]
+    i_ml = i - color_offsets[2]
+    i_mr = i - color_offsets[3]
+    i_cr = i - color_offsets[4]
+    i_cl = i - color_offsets[5]
     buf = np.zeros([LINE_WIDTH//2,12], dtype=np.uint8)
-    #buf = np.zeros([18,120], dtype=np.uint8)
-    if i_c >= 0 and i_c < W:
-      buf[:,4] = img_c[-1::-2,i_c]
-      buf[:,5] = img_c[-2::-2,i_c]
-      #if i_c % 2:
-      #_add_line(buf, img_c[::-1,i_c], 'C1') #left
-      #_add_line(buf, img_c[::-1,i_c], 'C0')
-    if i_m >= 0 and i_m < W:
-      buf[:,3] = img_m[-1::-2,i_m]
-      buf[:,2] = img_m[-2::-2,i_m]
-      #_add_line(buf, img_m[::-1,i_m], 'M0') #left
-      #_add_line(buf, img_m[::-1,i_m], 'M1')
-    if i_y >= 0 and i_y < W:
-      buf[:,0] = img_y[-1::-2,i_y]
-      buf[:,1] = img_y[-2::-2,i_y]
-      #_add_line(buf, img_y[::-1,i_y], 'Y1') #left
-      #_add_line(buf, img_y[::-1,i_y], 'Y0')
+    if i_yr >= 0 and i_yr < W:
+      buf[:,0] = img_yr[:,i_yr]
+      #buf[:,0+6] = img_yr[:,i_yr]
+    if i_yl >= 0 and i_yl < W:
+      buf[:,1] = img_yl[:,i_yl]
+      #buf[:,1+6] = img_yl[:,i_yl]
+    if i_ml >= 0 and i_ml < W:
+      buf[:,2] = img_ml[:,i_ml]
+      #buf[:,2+6] = img_ml[:,i_ml]
+    if i_mr >= 0 and i_mr < W:
+      buf[:,3] = img_mr[:,i_mr]
+      #buf[:,3+6] = img_mr[:,i_mr]
+    if i_cr >= 0 and i_cr < W:
+      buf[:,4] = img_cr[:,i_cr]
+      #buf[:,4+6] = img_cr[:,i_cr]
+    if i_cl >= 0 and i_cl < W:
+      buf[:,5] = img_cl[:,i_cl]
+      #buf[:,5+6] = img_cl[:,i_cl]
     buf = _arrange_line(buf)
     line = _pack_bits(buf)
     assert(len(line) == 270), len(line)
     lines.append(line)
   return lines
 
-def convert_to_mbd(img):
+def convert_to_mbd(img, color_offsets=None):
   img = _resize(img)
 
   img = 255 - img #RGB -> CMY
   img = _dither(img)
-  lines = _cmy_array_to_lines(img)
+  lines = _cmy_array_to_lines(img, color_offsets=color_offsets)
 
   header = 'MBrush'.encode()
   header += bytes([0,0,0,2,0,0,0,0,0,0])
