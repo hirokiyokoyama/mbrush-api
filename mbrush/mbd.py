@@ -2,7 +2,7 @@
 
 import numpy as np
 
-LINE_WIDTH = 180
+LINE_WIDTH = 360
 COLOR_INTERVAL = 32
 
 def _dither(img):
@@ -48,7 +48,6 @@ def _add_line(buf, line, channel):
   assert(line.shape == (180,))
   assert(np.all(line <= 1))
   
-  line = line.reshape(20,9)
   inds = np.array([0,10,1,11,2,12,3,13,4,14])
   inds += {
     'Y0': 0,
@@ -69,10 +68,55 @@ def _add_line(buf, line, channel):
     'C0': np.array([1,5,0,4,8,3,7,2,6]),
     'C1': np.array([8,3,7,2,6,1,5,0,4])
   }[channel]
-  line = line.transpose()
-  line[fine_inds,:] = line
+  line = line.reshape(20,9).transpose().copy()
+  line[fine_inds,:] = line.copy()
   
-  buf[:9,inds] = line
+  buf[:9,inds] += line
+  assert(np.all(buf <= 1))
+  return buf
+
+def _arrange_line(line):
+  """
+  line: np.ndarray
+    Binary image column from bottom to top
+    with shape [180,12] and dtype np.uint8,
+    each element of which is either 0 or 1.
+  """
+  
+  assert(line.dtype == np.uint8)
+  assert(line.shape == (180,12))
+  assert(np.all(line <= 1))
+  
+  inds = np.array([0,10,1,11,2,12,3,13,4,14])
+  inds = inds[np.newaxis] + np.reshape([0,5,20,25,40,45,0,5,20,25,40,45], [12,1])
+  inds = np.concatenate([inds, inds+60], axis=1)
+  
+  fine_inds = np.array([
+    # (np.arange(9)*4 + n) % 9
+    [1,5,0,4,8,3,7,2,6],
+    [8,3,7,2,6,1,5,0,4],
+    [8,3,7,2,6,1,5,0,4],
+    [1,5,0,4,8,3,7,2,6],
+    [1,5,0,4,8,3,7,2,6],
+    [8,3,7,2,6,1,5,0,4],
+    
+    [6,1,5,0,4,8,3,7,2],
+    [8,3,7,2,6,1,5,0,4],
+    [8,3,7,2,6,1,5,0,4],
+    [6,1,5,0,4,8,3,7,2],
+    [6,1,5,0,4,8,3,7,2],
+    [8,3,7,2,6,1,5,0,4],
+  ])
+  buf = np.zeros([18,120], dtype=np.uint8)
+  line = line.reshape(20,9,12).transpose(2,1,0).copy()
+  for i in range(12):
+    line[i,fine_inds[i],:] = line[i].copy()
+
+    if i < 6:
+      buf[:9,inds[i]] = line[i]
+    else:
+      buf[9:,inds[i]] = line[i]
+  assert(np.all(buf <= 1))
   return buf
 
 def _pack_bits(bit_arr):
@@ -92,7 +136,8 @@ def _pack_bits(bit_arr):
   assert(bit_arr.shape[-1] % 8 == 0)
   
   byte_arr = bit_arr.reshape(bit_arr.shape[:-1]+(-1, 8))
-  byte_arr = (byte_arr << np.arange(8)).sum(-1, dtype=np.uint8)
+  byte_arr = byte_arr << np.arange(8)
+  byte_arr = byte_arr.sum(-1, dtype=np.uint8)
   byte_arr = bytes(byte_arr.reshape(-1))
   return byte_arr
 
@@ -100,6 +145,8 @@ def _resize(img):
   import cv2
   
   h, w = img.shape[:2]
+  if h == LINE_WIDTH:
+    return img
   scale = LINE_WIDTH/h
   img = cv2.resize(img, (int(w*scale), LINE_WIDTH))
   return img
@@ -108,25 +155,36 @@ def _cmy_array_to_lines(img):
   img_c = img[:,:,0]
   img_m = img[:,:,1]
   img_y = img[:,:,2]
+  #print(img_m[:,0])
 
-  buf = np.empty([18,120], dtype=np.uint8)
+  #buf = np.empty([18,120], dtype=np.uint8)
   lines = []
   W = img.shape[1]
   for i in range(W + 2*COLOR_INTERVAL):
-    buf[:] = 0
+    #buf[:] = 0
 
     i_c = i
     i_m = i - COLOR_INTERVAL
     i_y = i - 2*COLOR_INTERVAL
+    buf = np.zeros([LINE_WIDTH//2,12], dtype=np.uint8)
+    #buf = np.zeros([18,120], dtype=np.uint8)
     if i_c >= 0 and i_c < W:
-      #_add_line(buf, img_c[::-1,i_c], 'C1') left
-      _add_line(buf, img_c[::-1,i_c], 'C0')
+      buf[:,4] = img_c[-1::-2,i_c]
+      buf[:,5] = img_c[-2::-2,i_c]
+      #if i_c % 2:
+      #_add_line(buf, img_c[::-1,i_c], 'C1') #left
+      #_add_line(buf, img_c[::-1,i_c], 'C0')
     if i_m >= 0 and i_m < W:
-      #_add_line(buf, img_m[::-1,i_m], 'M0') left
-      _add_line(buf, img_m[::-1,i_m], 'M1')
+      buf[:,3] = img_m[-1::-2,i_m]
+      buf[:,2] = img_m[-2::-2,i_m]
+      #_add_line(buf, img_m[::-1,i_m], 'M0') #left
+      #_add_line(buf, img_m[::-1,i_m], 'M1')
     if i_y >= 0 and i_y < W:
-      #_add_line(buf, img_y[::-1,i_y], 'Y1') left
-      _add_line(buf, img_y[::-1,i_y], 'Y0')
+      buf[:,0] = img_y[-1::-2,i_y]
+      buf[:,1] = img_y[-2::-2,i_y]
+      #_add_line(buf, img_y[::-1,i_y], 'Y1') #left
+      #_add_line(buf, img_y[::-1,i_y], 'Y0')
+    buf = _arrange_line(buf)
     line = _pack_bits(buf)
     assert(len(line) == 270), len(line)
     lines.append(line)
